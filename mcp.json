@@ -4,6 +4,15 @@
     "claude-skills-server":{
       "url": "http://localhost:8765/mcp",
       "type": "http"
+    },
+    "computer-use": {
+      "command": "python3",
+      "args": ["/Users/uengine/pod-mcp/run_server_stdio.py"],
+      "env": {
+        "POD_NAMESPACE": "pod-mcp",
+        "IN_CLUSTER": "false"
+      }
     }
+
   }
 }

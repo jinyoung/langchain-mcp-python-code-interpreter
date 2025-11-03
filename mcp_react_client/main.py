@@ -20,6 +20,7 @@ from mcp.client.streamable_http import streamablehttp_client
 import httpx
 
 from langchain_mcp_adapters.tools import load_mcp_tools
+from langchain_mcp_adapters.sessions import StreamableHttpConnection
 from langchain_core.tools import tool
 from .image_generator import generate_single_image, generate_comic
 from .memory import MemoryManager
@@ -222,41 +223,46 @@ async def load_all_tools_from_sessions(session_params: List[tuple]):
     """Load tools from all MCP sessions plus image generation and memory tools"""
     all_mcp_tools = []
     
-    # Load MCP tools from all sessions
+    # Load MCP tools using the new connection-based approach
     for server_name, connection_type, connection_params in session_params:
         try:
             print(f"🔧 Loading tools from {server_name} ({connection_type})...")
             
-            if connection_type == 'stdio':
-                # Stdio-based connection
+            if connection_type == 'http':
+                # HTTP-based connection using new StreamableHttpConnection
+                url = connection_params['url']
+                headers = connection_params.get('headers', {})
+                
+                connection = StreamableHttpConnection(url=url, headers=headers)
+                # Add required transport key
+                connection['transport'] = 'streamable_http'
+                
+                mcp_tools = await load_mcp_tools(
+                    session=None, 
+                    connection=connection,
+                    server_name=server_name
+                )
+                all_mcp_tools.extend(mcp_tools)
+                print(f"✅ Loaded {len(mcp_tools)} tools from {server_name}")
+                
+            elif connection_type == 'stdio':
+                # Stdio-based connection (fallback to old method)
                 async with stdio_client(connection_params) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        mcp_tools = await load_mcp_tools(session)
+                        mcp_tools = await load_mcp_tools(session, server_name=server_name)
                         all_mcp_tools.extend(mcp_tools)
                         print(f"✅ Loaded {len(mcp_tools)} tools from {server_name}")
                         
             elif connection_type == 'sse':
-                # SSE-based connection
+                # SSE-based connection (fallback to old method)
                 url = connection_params['url']
                 headers = connection_params.get('headers', {})
                 
                 async with sse_client(url, headers=headers) as (read, write):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
-                        mcp_tools = await load_mcp_tools(session)
-                        all_mcp_tools.extend(mcp_tools)
-                        print(f"✅ Loaded {len(mcp_tools)} tools from {server_name}")
-                        
-            elif connection_type == 'http':
-                # HTTP-based connection
-                url = connection_params['url']
-                headers = connection_params.get('headers', {})
-                
-                async with streamablehttp_client(url, headers=headers) as (read, write, get_session_id):
-                    async with ClientSession(read, write) as session:
-                        await session.initialize()
-                        mcp_tools = await load_mcp_tools(session)
+                        mcp_tools = await load_mcp_tools(session, server_name=server_name)
                         all_mcp_tools.extend(mcp_tools)
                         print(f"✅ Loaded {len(mcp_tools)} tools from {server_name}")
                         
@@ -265,6 +271,8 @@ async def load_all_tools_from_sessions(session_params: List[tuple]):
                 
         except Exception as e:
             print(f"⚠️  Warning: Failed to load tools from {server_name}: {e}")
+            import traceback
+            traceback.print_exc()
     
     # Add image generation tools
     image_tools = [create_image, create_comic]
@@ -565,6 +573,7 @@ async def demo_mode(verbose=False):
         # "Create a new Python file called 'hello.py' with a function that says hello",
         "claude-skills 에 있는 스킬들을 알려줘",
         "claude-skills 에서 pptx 를 만들 수 있는 skill을 찾아줘",
+        "computer-use mcp 를 이용하여 helloworld 를 찍는 js 파일을 만들어서 실행해봐",
         "claude-skills를 이용하여 간단히 python 역사에 대한 pptx를 만들어"
     ]
     
@@ -598,6 +607,8 @@ async def demo_mode(verbose=False):
         print(f"❌ Failed to set up MCP client: {e}")
         print("Make sure the MCP servers are available and properly configured.")
         return
+    finally:
+        pass  # No persistent sessions to close
     
     print("\n✅ All demos completed!")
 
@@ -671,7 +682,7 @@ Current user query: {query}"""
     
     # Set up the OpenAI model
     model = ChatOpenAI(
-        model="gpt-4",
+        model="gpt-4o",  # Use gpt-4o for larger context window
         temperature=0,
         api_key=openai_api_key
     )
